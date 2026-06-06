@@ -4,6 +4,8 @@ using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
 using Vintagestory.API.MathTools;
+using Vintagestory.API.Util;
+using Vintagestory.GameContent;
 
 namespace VSpaint
 {
@@ -12,6 +14,17 @@ namespace VSpaint
         public bool HasCanvas  { get; private set; }
         public bool IsFinished { get; private set; }
         public byte[] PixelData { get; private set; }
+
+        public int[] pixels = new int[PaintingUtil.PixelCount];
+
+        private const int CanvasW = PaintingUtil.Width;
+        private const int CanvasH = PaintingUtil.Height;
+
+        private int selectedColor = 1;
+        private int brushRadius = 0;   // 0=1px, 1=3px, 2=5px
+        private bool eraserMode = false;
+        private bool isDirty = false;
+        private bool finishConfirmMode = false;
 
         // Mesh is built on the main thread, read on the tessellation thread.
         private readonly object meshLock = new object();
@@ -28,6 +41,7 @@ namespace VSpaint
             base.Initialize(api);
             if (api.Side == EnumAppSide.Client && HasCanvas)
                 RequestMeshRebuild();
+
         }
 
         public void MountCanvas()
@@ -35,6 +49,7 @@ namespace VSpaint
             HasCanvas  = true;
             IsFinished = false;
             PixelData  = null;
+            pixels.Fill(0);
             lock (meshLock) { clientMesh = null; }
             FreeAtlasSlot();
             MarkDirty(true);
@@ -94,6 +109,73 @@ namespace VSpaint
             MarkDirty(true);
         }
 
+        public void SaveToServer(IPlayer player)
+        {
+            if (!isDirty) return;
+            byte[] encoded = PaintingUtil.EncodePixels(pixels);
+            Api.ModLoader.GetModSystem<VSpaintModSystem>()?.NetworkHandler?.SendSave(Pos, encoded);
+            isDirty = false;
+
+            if (player != null)
+            {
+                ItemSlot brushSlot = player.InventoryManager.ActiveHotbarSlot;
+                if (brushSlot?.Itemstack?.Collectible is ItemPaintbrush brush)
+                    brush.UseBrush(brushSlot, player);
+            }
+        }
+
+
+        public Vec3i ToCanvasSpace(Vec3d normalized_in)
+        {
+            int x = 0;
+            int y = 0;
+
+            int facing = EaselFacingRotation();
+
+            if (facing == 0)
+            {
+                x = (int)(normalized_in.X * (double)(CanvasW - 1));
+                y = (CanvasH - 1) - (int)(normalized_in.Y * (double)(CanvasH -1));
+            }
+            else if(facing == 1)
+            {
+                x = (int)(normalized_in.Z * (double)(CanvasW - 1));
+                y = (CanvasH - 1) - (int)(normalized_in.Y * (double)(CanvasH - 1));
+            }
+            else if (facing == 2)
+            {
+                x = (CanvasW - 1) - (int)(normalized_in.X * (double)(CanvasW - 1));
+                y = (CanvasH - 1) - (int)(normalized_in.Y * (double)(CanvasH - 1));
+            }
+            else if (facing == 3)
+            {
+                x = (CanvasW - 1) - (int)(normalized_in.Z * (double)(CanvasW - 1));
+                y = (CanvasH - 1) - (int)(normalized_in.Y * (double)(CanvasH - 1));
+            }
+
+            return new Vec3i(x, y, 0);
+        }
+
+        public void DrawBrushStamp(int cx, int cy)
+        {
+            Api.Logger.Event("DrawStamp {0} {1}", cx, cy);
+            isDirty = true;
+            int colorIdx = eraserMode ? 0 : selectedColor;
+
+            for (int dy = -brushRadius; dy <= brushRadius; dy++)
+            {
+                for (int dx = -brushRadius; dx <= brushRadius; dx++)
+                {
+                    if (dx * dx + dy * dy > brushRadius * brushRadius) continue;
+                    int px = cx + dx;
+                    int py = cy + dy;
+
+                    Api.Logger.Event("px py {0} {1}", px, py);
+                    if (px < 0 || px >= CanvasW || py < 0 || py >= CanvasH) continue;
+                    pixels[py * CanvasW + px] = colorIdx;
+                }
+            }
+        }
         public void FinishPainting()
         {
             if (!HasCanvas) return;
@@ -234,6 +316,15 @@ namespace VSpaint
             if (path.EndsWith("-south")) return 3f * GameMath.PIHALF;
             if (path.EndsWith("-west"))  return GameMath.PI;
             return GameMath.PIHALF;
+        }
+
+        private int EaselFacingRotation()
+        {
+            string path = Block?.Code?.Path ?? "";
+            if (path.EndsWith("-east")) return 1;
+            if (path.EndsWith("-south")) return 2;
+            if (path.EndsWith("-west")) return 3;
+            return 0;
         }
 
         public override void ToTreeAttributes(ITreeAttribute tree)

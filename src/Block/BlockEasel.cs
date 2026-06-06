@@ -2,65 +2,108 @@ using System.Collections.Generic;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
+using Vintagestory.API.MathTools;
+using Vintagestory.GameContent;
 
 namespace VSpaint
 {
     public class BlockEasel : Block
     {
+        const double easel_bot_start_y = 0.414f;
+
         public override bool OnBlockInteractStart(IWorldAccessor world, IPlayer byPlayer, BlockSelection blockSel)
         {
-            var be = world.BlockAccessor.GetBlockEntity(blockSel.Position) as BlockEntityEasel;
-            if (be == null) return base.OnBlockInteractStart(world, byPlayer, blockSel);
+            BlockEntityEasel BEEaselRef = world.BlockAccessor.GetBlockEntity(blockSel.Position) as BlockEntityEasel;
+            if (BEEaselRef == null) return base.OnBlockInteractStart(world, byPlayer, blockSel);
 
-            ItemSlot heldSlot   = byPlayer.InventoryManager.ActiveHotbarSlot;
-            bool     shiftHeld  = byPlayer.Entity.Controls.ShiftKey;
-            bool     heldCanvas = IsCanvasItem(heldSlot.Itemstack);
-            bool     heldBrush  = heldSlot.Itemstack?.Collectible is ItemPaintbrush;
-
-            // Mount blank canvas.
-            if (!be.HasCanvas && heldCanvas)
+            if (world.Side == EnumAppSide.Server)
             {
-                if (world.Side == EnumAppSide.Server)
+                ItemSlot heldSlot = byPlayer.InventoryManager.ActiveHotbarSlot;
+                bool shiftHeld = byPlayer.Entity.Controls.ShiftKey;
+                bool heldCanvas = IsCanvasItem(heldSlot.Itemstack);
+                bool heldBrush = heldSlot.Itemstack?.Collectible is ItemPaintbrush;
+                
+                world.Logger.Event("InteracStartServer");
+
+                if (!BEEaselRef.HasCanvas && heldCanvas)
                 {
-                    be.MountCanvas();
-                    heldSlot.TakeOut(1);
-                    heldSlot.MarkDirty();
+                    if (world.Side == EnumAppSide.Server)
+                    {
+                        BEEaselRef.MountCanvas();
+                        heldSlot.TakeOut(1);
+                        heldSlot.MarkDirty();
+                    }
+                    return true;
                 }
-                return true;
-            }
 
-            // Shift-click to take a finished canvas off the easel.
-            if (be.HasCanvas && shiftHeld)
-            {
-                if (be.IsFinished && world.Side == EnumAppSide.Server)
-                    be.TakeCanvas(byPlayer);
-                return true;
-            }
-
-            // Open painting GUI; requires a wet brush.
-            if (be.HasCanvas && !be.IsFinished && heldBrush)
-            {
-                if (world.Side == EnumAppSide.Client)
+                // Shift-click to take a finished canvas off the easel.
+                if (BEEaselRef.HasCanvas && shiftHeld)
                 {
-                    ItemPaintbrush.CheckDrying(heldSlot, world);
-
-                    if (!ItemPaintbrush.IsWet(heldSlot.Itemstack))
-                    {
-                        string hint = ItemPaintbrush.IsDry(heldSlot.Itemstack)
-                            ? Lang.Get("vspaint:brush-hint-dry")
-                            : Lang.Get("vspaint:brush-hint-clean");
-                        (world.Api as ICoreClientAPI)?.TriggerIngameError(this, "notwet", hint);
-                    }
-                    else
-                    {
-                        be.OpenPaintGui(byPlayer, GetHotbarWetColors(byPlayer, world));
-                    }
+                    if (BEEaselRef.IsFinished && world.Side == EnumAppSide.Server)
+                        BEEaselRef.TakeCanvas(byPlayer);
+                    return true;
                 }
+
+                /*// Open painting GUI; requires a wet brush.
+                if (be.HasCanvas && !be.IsFinished && heldBrush)
+                {
+                    if (world.Side == EnumAppSide.Client)
+                    {
+                        ItemPaintbrush.CheckDrying(heldSlot, world);
+
+                        if (!ItemPaintbrush.IsWet(heldSlot.Itemstack))
+                        {
+                            string hint = ItemPaintbrush.IsDry(heldSlot.Itemstack)
+                                ? Lang.Get("vspaint:brush-hint-dry")
+                                : Lang.Get("vspaint:brush-hint-clean");
+                            (world.Api as ICoreClientAPI)?.TriggerIngameError(this, "notwet", hint);
+                        }
+                        else
+                        {
+                            be.OpenPaintGui(byPlayer, GetHotbarWetColors(byPlayer, world));
+                        }
+                    }
+                    return true;
+                }
+                */
                 return true;
             }
+            else
+            {
+                Vec3d converted_hit_pos = Vec3d.Zero;
+                world.Logger.Event("InteracStartClient");
+                if (blockSel.Block == null)
+                {
+                    converted_hit_pos = blockSel.HitPosition.Add(0.0f, 1.0f - easel_bot_start_y, 0.0f);
+                }
+                else
+                {
+                    converted_hit_pos = blockSel.HitPosition.Add(0.0f, -easel_bot_start_y, 0.0f);
+                }
+                world.Logger.Event("Drawing at Unconverted= {0},{1},{2}", converted_hit_pos.X, converted_hit_pos.Y, converted_hit_pos.Z);
 
-            return base.OnBlockInteractStart(world, byPlayer, blockSel);
+                converted_hit_pos.X = (converted_hit_pos.X - 0.03f) / (0.97f - 0.03f);
+                converted_hit_pos.Z = (converted_hit_pos.Z - 0.03f) / (0.97f - 0.03f);
+                world.Logger.Event("Drawing at Normalized = {0},{1},{2}", converted_hit_pos.X, converted_hit_pos.Y, converted_hit_pos.Z);
+
+                if (converted_hit_pos.X < 0.0f) converted_hit_pos.X = 0.0f;
+                if (converted_hit_pos.Y < 0.0f) converted_hit_pos.Y = 0.0f;
+                if (converted_hit_pos.Z < 0.0f) converted_hit_pos.Z = 0.0f;
+                if (converted_hit_pos.X > 1.0f) converted_hit_pos.X = 1.0f;
+                if (converted_hit_pos.Y > 1.0f) converted_hit_pos.Y = 1.0f;
+                if (converted_hit_pos.Z > 1.0f) converted_hit_pos.Z = 1.0f;
+                
+                var canvas_space = BEEaselRef.ToCanvasSpace(converted_hit_pos);
+
+                
+                BEEaselRef.DrawBrushStamp(canvas_space.X, canvas_space.Y);
+                BEEaselRef.MarkDirty();
+                BEEaselRef.SaveToServer(byPlayer);
+                return true;
+            }
+            return true;
         }
+
 
         // Side-effect: also runs CheckDrying on each hotbar brush, so opening the
         // easel can transition wet brushes to dry if drying is enabled.

@@ -21,6 +21,7 @@ namespace VSpaint
 
             api.RegisterBlockClass("BlockEasel",          typeof(BlockEasel));
             api.RegisterBlockClass("BlockCanvasPainting", typeof(BlockCanvasPainting));
+            api.RegisterBlockBehaviorClass("BlockEaselBehavior", typeof(BlockEaselBehavior));
 
             api.RegisterBlockEntityClass("BlockEntityEasel",          typeof(BlockEntityEasel));
             api.RegisterBlockEntityClass("BlockEntityCanvasPainting", typeof(BlockEntityCanvasPainting));
